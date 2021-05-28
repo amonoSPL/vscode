@@ -55,7 +55,7 @@ export class TestCell extends NotebookCellTextModel {
 		outputs: IOutputDto[],
 		modeService: IModeService,
 	) {
-		super(CellUri.generate(URI.parse('test:///fake/notebook'), handle), handle, source, language, cellKind, outputs, undefined, { transientCellMetadata: {}, transientDocumentMetadata: {}, transientOutputs: false }, modeService);
+		super(CellUri.generate(URI.parse('test:///fake/notebook'), handle), handle, source, language, cellKind, outputs, undefined, undefined, { transientCellMetadata: {}, transientDocumentMetadata: {}, transientOutputs: false }, modeService);
 	}
 }
 
@@ -177,7 +177,7 @@ function _createTestNotebookEditor(instantiationService: TestInstantiationServic
 	const viewContext = new ViewContext(new NotebookOptions(instantiationService.get(IConfigurationService)), new NotebookEventDispatcher());
 	const viewModel: NotebookViewModel = instantiationService.createInstance(NotebookViewModel, viewType, model.notebook, viewContext, null);
 
-	const cellList = createNotebookCellList(instantiationService);
+	const cellList = createNotebookCellList(instantiationService, viewContext);
 	cellList.attachViewModel(viewModel);
 	const listViewInfoAccessor = new ListViewInfoAccessor(cellList);
 
@@ -275,7 +275,7 @@ export async function withTestNotebook<R = any>(cells: [source: string, lang: st
 	return res;
 }
 
-export function createNotebookCellList(instantiationService: TestInstantiationService) {
+export function createNotebookCellList(instantiationService: TestInstantiationService, viewContext?: ViewContext) {
 	const delegate: IListVirtualDelegate<CellViewModel> = {
 		getHeight(element: CellViewModel) { return element.getHeight(17); },
 		getTemplateId() { return 'template'; }
@@ -293,6 +293,7 @@ export function createNotebookCellList(instantiationService: TestInstantiationSe
 		'NotebookCellList',
 		DOM.$('container'),
 		DOM.$('body'),
+		viewContext ?? new ViewContext(new NotebookOptions(instantiationService.get(IConfigurationService)), new NotebookEventDispatcher()),
 		delegate,
 		[renderer],
 		instantiationService.get<IContextKeyService>(IContextKeyService),

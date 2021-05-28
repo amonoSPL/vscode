@@ -294,12 +294,8 @@ export class TerminalService implements ITerminalService {
 		// The state must be updated when the terminal is relaunched, otherwise the persistent
 		// terminal ID will be stale and the process will be leaked.
 		this.onInstanceProcessIdReady(() => this._saveState());
-		this.onInstanceTitleChanged(instance => {
-			this._updateTitle(instance);
-		});
-		this.onInstanceIconChanged(instance => {
-			this._updateIcon(instance);
-		});
+		this.onInstanceTitleChanged(instance => this._updateTitle(instance));
+		this.onInstanceIconChanged(instance => this._updateIcon(instance));
 	}
 
 	private _handleInstanceContextKeys(): void {
@@ -410,7 +406,7 @@ export class TerminalService implements ITerminalService {
 		if (!this.configHelper.config.enablePersistentSessions || !instance || !instance.persistentProcessId || !instance.title) {
 			return;
 		}
-		this._offProcessTerminalService?.updateTitle(instance.persistentProcessId, instance.title);
+		this._offProcessTerminalService?.updateTitle(instance.persistentProcessId, instance.title, instance.titleSource);
 	}
 
 	@debounce(500)
@@ -418,7 +414,7 @@ export class TerminalService implements ITerminalService {
 		if (!this.configHelper.config.enablePersistentSessions || !instance || !instance.persistentProcessId || !instance.icon) {
 			return;
 		}
-		this._offProcessTerminalService?.updateIcon(instance.persistentProcessId, instance.icon.id, instance.color);
+		this._offProcessTerminalService?.updateIcon(instance.persistentProcessId, instance.icon, instance.color);
 	}
 
 	private _removeGroup(group: ITerminalGroup): void {
@@ -525,10 +521,6 @@ export class TerminalService implements ITerminalService {
 			return;
 		}
 
-		if (this._activeGroupIndex === index) {
-			return;
-		}
-
 		this._activeGroupIndex = index;
 
 		this._terminalGroups.forEach((g, i) => g.setVisible(i === this._activeGroupIndex));
@@ -625,6 +617,104 @@ export class TerminalService implements ITerminalService {
 		return instance;
 	}
 
+	unsplitInstance(instance: ITerminalInstance): void {
+		const oldGroup = this.getGroupForInstance(instance);
+		if (!oldGroup || oldGroup.terminalInstances.length < 2) {
+			return;
+		}
+
+		oldGroup.removeInstance(instance);
+
+		const newGroup = this._instantiationService.createInstance(TerminalGroup, this._terminalContainer, instance);
+		newGroup.onPanelOrientationChanged((orientation) => this._onPanelOrientationChanged.fire(orientation));
+		this._terminalGroups.push(newGroup);
+
+		newGroup.addDisposable(newGroup.onDisposed(this._onGroupDisposed.fire, this._onGroupDisposed));
+		newGroup.addDisposable(newGroup.onInstancesChanged(this._onInstancesChanged.fire, this._onInstancesChanged));
+		this._onInstancesChanged.fire();
+	}
+
+	joinInstances(instances: ITerminalInstance[]): void {
+		// Find the group of the first instance that is the only instance in the group, if one exists
+		let candidateInstance: ITerminalInstance | undefined = undefined;
+		let candidateGroup: ITerminalGroup | undefined = undefined;
+		for (const instance of instances) {
+			const group = this.getGroupForInstance(instance);
+			if (group?.terminalInstances.length === 1) {
+				candidateInstance = instance;
+				candidateGroup = group;
+				break;
+			}
+		}
+
+		// Create a new group if needed
+		if (!candidateGroup) {
+			candidateGroup = this._instantiationService.createInstance(TerminalGroup, this._terminalContainer, undefined);
+			candidateGroup.onPanelOrientationChanged((orientation) => this._onPanelOrientationChanged.fire(orientation));
+			this._terminalGroups.push(candidateGroup);
+			candidateGroup.addDisposable(candidateGroup.onDisposed(this._onGroupDisposed.fire, this._onGroupDisposed));
+			candidateGroup.addDisposable(candidateGroup.onInstancesChanged(this._onInstancesChanged.fire, this._onInstancesChanged));
+		}
+
+		const wasActiveGroup = this.getActiveGroup() === candidateGroup;
+
+		// Unsplit all other instances and add them to the new group
+		for (const instance of instances) {
+			if (instance === candidateInstance) {
+				continue;
+			}
+
+			const oldGroup = this.getGroupForInstance(instance);
+			if (!oldGroup) {
+				// Something went wrong, don't join this one
+				continue;
+			}
+			oldGroup.removeInstance(instance);
+			candidateGroup.addInstance(instance);
+		}
+
+		// Set the active terminal
+		this.setActiveInstance(instances[0]);
+
+		// Fire events
+		this._onInstancesChanged.fire();
+		if (!wasActiveGroup) {
+			this._onActiveGroupChanged.fire();
+		}
+	}
+
+	moveGroup(source: ITerminalInstance, target: ITerminalInstance): void {
+		const sourceGroup = this.getGroupForInstance(source);
+		const targetGroup = this.getGroupForInstance(target);
+		if (!sourceGroup || !targetGroup) {
+			return;
+		}
+		const sourceGroupIndex = this._terminalGroups.indexOf(sourceGroup);
+		const targetGroupIndex = this._terminalGroups.indexOf(targetGroup);
+		this._terminalGroups.splice(sourceGroupIndex, 1);
+		this._terminalGroups.splice(targetGroupIndex, 0, sourceGroup);
+		this._onInstancesChanged.fire();
+	}
+
+	moveInstance(source: ITerminalInstance, target: ITerminalInstance, side: 'left' | 'right'): void {
+		const sourceGroup = this.getGroupForInstance(source);
+		const targetGroup = this.getGroupForInstance(target);
+		if (!sourceGroup || !targetGroup) {
+			return;
+		}
+
+		// Move from the source group to the target group
+		if (sourceGroup !== targetGroup) {
+			// Move groups
+			sourceGroup.removeInstance(source);
+			targetGroup.addInstance(source);
+		}
+
+		// Rearrange within the target group
+		const index = targetGroup.terminalInstances.indexOf(target) + (side === 'right' ? 1 : 0);
+		targetGroup.moveInstance(source, index);
+	}
+
 	protected _initInstanceListeners(instance: ITerminalInstance): void {
 		instance.addDisposable(instance.onDisposed(this._onInstanceDisposed.fire, this._onInstanceDisposed));
 		instance.addDisposable(instance.onTitleChanged(this._onInstanceTitleChanged.fire, this._onInstanceTitleChanged));
@@ -641,6 +731,12 @@ export class TerminalService implements ITerminalService {
 		}));
 		instance.addDisposable(instance.onMaximumDimensionsChanged(() => this._onInstanceMaximumDimensionsChanged.fire(instance)));
 		instance.addDisposable(instance.onFocus(this._onActiveInstanceChanged.fire, this._onActiveInstanceChanged));
+		instance.addDisposable(instance.onRequestAddInstanceToGroup(e => {
+			const sourceInstance = this.getInstanceFromId(parseInt(e.uri.path));
+			if (sourceInstance) {
+				this.moveInstance(sourceInstance, instance, e.side);
+			}
+		}));
 	}
 
 	registerProcessSupport(isSupported: boolean): void {
@@ -864,7 +960,7 @@ export class TerminalService implements ITerminalService {
 			iconClass: ThemeIcon.asClassName(configureTerminalProfileIcon),
 			tooltip: nls.localize('createQuickLaunchProfile', "Configure Terminal Profile")
 		}];
-		const icon = profile.icon ? (iconRegistry.get(profile.icon) || Codicon.terminal) : Codicon.terminal;
+		const icon = (profile.icon && ThemeIcon.isThemeIcon(profile.icon)) ? profile.icon : Codicon.terminal;
 		const label = `$(${icon.id}) ${profile.profileName}`;
 		if (profile.args) {
 			if (typeof profile.args === 'string') {
@@ -940,11 +1036,14 @@ export class TerminalService implements ITerminalService {
 
 		// Add welcome message and title annotation for local terminals launched within remote or
 		// virtual workspaces
-		const isRemoteWorkspace = !!VirtualWorkspaceContext.getValue(this._contextKeyService) ||
-			this._remoteAgentService.getConnection() && (typeof shellLaunchConfig.cwd === 'string' || shellLaunchConfig.cwd?.scheme === Schemas.file);
-		if (isRemoteWorkspace) {
-			shellLaunchConfig.initialText = formatMessageForTerminal(nls.localize('localTerminal', "Warning: This shell is running on your local machine"), true);
-			shellLaunchConfig.description = nls.localize('localTerminalDescription', "Local");
+		if (typeof shellLaunchConfig.cwd !== 'string' && shellLaunchConfig.cwd?.scheme === Schemas.file) {
+			if (VirtualWorkspaceContext.getValue(this._contextKeyService)) {
+				shellLaunchConfig.initialText = formatMessageForTerminal(nls.localize('localTerminalVirtualWorkspace', "⚠ : This shell is open to a \x1b[3mlocal\x1b[23m folder, NOT to the virtual folder"), true);
+				shellLaunchConfig.description = nls.localize('localTerminalDescription', "Local");
+			} else if (this._remoteAgentService.getConnection()) {
+				shellLaunchConfig.initialText = formatMessageForTerminal(nls.localize('localTerminalRemote', "⚠ : This shell is running on your \x1b[3mlocal\x1b[23m machine, NOT on the connected remote machine"), true);
+				shellLaunchConfig.description = nls.localize('localTerminalDescription', "Local");
+			}
 		}
 
 		const terminalGroup = this._instantiationService.createInstance(TerminalGroup, this._terminalContainer, shellLaunchConfig);
@@ -970,6 +1069,7 @@ export class TerminalService implements ITerminalService {
 		instance.shellLaunchConfig.hideFromUser = false;
 		const terminalGroup = this._instantiationService.createInstance(TerminalGroup, this._terminalContainer, instance);
 		this._terminalGroups.push(terminalGroup);
+		terminalGroup.onPanelOrientationChanged((orientation) => this._onPanelOrientationChanged.fire(orientation));
 		terminalGroup.addDisposable(terminalGroup.onDisposed(this._onGroupDisposed.fire, this._onGroupDisposed));
 		terminalGroup.addDisposable(terminalGroup.onInstancesChanged(this._onInstancesChanged.fire, this._onInstancesChanged));
 		if (this.terminalInstances.length === 1) {

@@ -104,8 +104,8 @@ suite('Notebook API tests', function () {
 
 	suiteSetup(function () {
 		suiteDisposables.push(vscode.notebook.registerNotebookContentProvider('notebookCoreTest', {
-			openNotebook: async (_resource: vscode.Uri): Promise<vscode.NotebookData> => {
-				if (/.*empty\-.*\.vsctestnb$/.test(_resource.path)) {
+			openNotebook: async (resource: vscode.Uri): Promise<vscode.NotebookData> => {
+				if (/.*empty\-.*\.vsctestnb$/.test(resource.path)) {
 					return {
 						metadata: new vscode.NotebookDocumentMetadata(),
 						cells: []
@@ -440,12 +440,12 @@ suite('Notebook API tests', function () {
 		await cellsChangeEvent;
 		await cellMetadataChangeEvent;
 		assert.strictEqual(vscode.window.activeNotebookEditor!.document.cellCount, 3);
-		assert.strictEqual(vscode.window.activeNotebookEditor!.document.cellAt(0)?.metadata?.inputCollapsed, false);
+		assert.strictEqual(vscode.window.activeNotebookEditor!.document.cellAt(0)?.metadata.inputCollapsed, false);
 		assert.strictEqual(version + 1, vscode.window.activeNotebookEditor!.document.version);
 
 		await vscode.commands.executeCommand('undo');
 		assert.strictEqual(version + 2, vscode.window.activeNotebookEditor!.document.version);
-		assert.strictEqual(vscode.window.activeNotebookEditor!.document.cellAt(0)?.metadata?.inputCollapsed, undefined);
+		assert.strictEqual(vscode.window.activeNotebookEditor!.document.cellAt(0)?.metadata.inputCollapsed, undefined);
 		assert.strictEqual(vscode.window.activeNotebookEditor!.document.cellCount, 2);
 	});
 

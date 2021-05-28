@@ -29,7 +29,7 @@ export class MarkdownCellViewModel extends BaseCellViewModel implements ICellVie
 
 	set renderedMarkdownHeight(newHeight: number) {
 		if (this.getEditState() === CellEditState.Preview) {
-			const newTotalHeight = newHeight + this.viewContext.notebookOptions.getLayoutConfiguration().bottomCellToolbarGap; // BOTTOM_CELL_TOOLBAR_GAP;
+			const newTotalHeight = newHeight + this.viewContext.notebookOptions.getLayoutConfiguration().bottomToolbarGap; // BOTTOM_CELL_TOOLBAR_GAP;
 			this.totalHeight = newTotalHeight;
 		}
 	}
@@ -52,7 +52,7 @@ export class MarkdownCellViewModel extends BaseCellViewModel implements ICellVie
 		this.totalHeight = this._editorHeight
 			+ layoutConfiguration.markdownCellTopMargin // MARKDOWN_CELL_TOP_MARGIN
 			+ layoutConfiguration.markdownCellBottomMargin // MARKDOWN_CELL_BOTTOM_MARGIN
-			+ layoutConfiguration.bottomCellToolbarGap // BOTTOM_CELL_TOOLBAR_GAP
+			+ layoutConfiguration.bottomToolbarGap // BOTTOM_CELL_TOOLBAR_GAP
 			+ this.viewContext.notebookOptions.computeStatusBarHeight();
 	}
 
@@ -120,7 +120,7 @@ export class MarkdownCellViewModel extends BaseCellViewModel implements ICellVie
 			editorWidth: initialNotebookLayoutInfo?.width
 				? this.viewContext.notebookOptions.computeMarkdownCellEditorWidth(initialNotebookLayoutInfo.width)
 				: 0,
-			bottomToolbarOffset: this.viewContext.notebookOptions.getLayoutConfiguration().bottomCellToolbarGap, // BOTTOM_CELL_TOOLBAR_GAP,
+			bottomToolbarOffset: this.viewContext.notebookOptions.getLayoutConfiguration().bottomToolbarGap, // BOTTOM_CELL_TOOLBAR_GAP,
 			totalHeight: 0
 		};
 
@@ -129,7 +129,7 @@ export class MarkdownCellViewModel extends BaseCellViewModel implements ICellVie
 		}));
 
 		this._register(model.onDidChangeMetadata(e => {
-			if (this.metadata?.inputCollapsed) {
+			if (this.metadata.inputCollapsed) {
 				this._onDidHideInput.fire();
 			}
 		}));
@@ -153,7 +153,7 @@ export class MarkdownCellViewModel extends BaseCellViewModel implements ICellVie
 
 	layoutChange(state: MarkdownCellLayoutChangeEvent) {
 		// recompute
-		if (!this.metadata?.inputCollapsed) {
+		if (!this.metadata.inputCollapsed) {
 			const editorWidth = state.outerWidth !== undefined
 				? this.viewContext.notebookOptions.computeMarkdownCellEditorWidth(state.outerWidth)
 				: this._layoutInfo.editorWidth;

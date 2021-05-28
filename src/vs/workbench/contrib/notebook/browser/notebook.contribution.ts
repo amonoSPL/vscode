@@ -29,7 +29,7 @@ import { NotebookEditor } from 'vs/workbench/contrib/notebook/browser/notebookEd
 import { NotebookEditorInput } from 'vs/workbench/contrib/notebook/common/notebookEditorInput';
 import { INotebookService } from 'vs/workbench/contrib/notebook/common/notebookService';
 import { NotebookService } from 'vs/workbench/contrib/notebook/browser/notebookServiceImpl';
-import { CellKind, CellToolbarLocKey, CellToolbarVisibility, CellUri, DisplayOrderKey, ExperimentalUseMarkdownRenderer, getCellUndoRedoComparisonKey, IResolvedNotebookEditorModel, NotebookDocumentBackupData, NotebookTextDiffEditorPreview, NotebookWorkingCopyTypeIdentifier, ShowCellStatusBarKey } from 'vs/workbench/contrib/notebook/common/notebookCommon';
+import { CellKind, CellToolbarLocKey, CellToolbarVisibility, CellUri, DisplayOrderKey, ExperimentalUndoRedoPerCell, ExperimentalUseMarkdownRenderer, getCellUndoRedoComparisonKey, IResolvedNotebookEditorModel, NotebookDocumentBackupData, NotebookTextDiffEditorPreview, NotebookWorkingCopyTypeIdentifier, ShowCellStatusBarKey } from 'vs/workbench/contrib/notebook/common/notebookCommon';
 import { IEditorService } from 'vs/workbench/services/editor/common/editorService';
 import { IUndoRedoService } from 'vs/platform/undoRedo/common/undoRedo';
 import { INotebookEditorModelResolverService } from 'vs/workbench/contrib/notebook/common/notebookEditorModelResolverService';
@@ -52,6 +52,12 @@ import { IWorkingCopyIdentifier } from 'vs/workbench/services/workingCopy/common
 import { EditorOverride } from 'vs/platform/editor/common/editor';
 import { IExtensionService } from 'vs/workbench/services/extensions/common/extensions';
 import { IWorkingCopyEditorService } from 'vs/workbench/services/workingCopy/common/workingCopyEditorService';
+import { IConfigurationService } from 'vs/platform/configuration/common/configuration';
+import { ILabelService } from 'vs/platform/label/common/label';
+import { IWorkingCopyBackupService } from 'vs/workbench/services/workingCopy/common/workingCopyBackup';
+import { IEditorGroupsService } from 'vs/workbench/services/editor/common/editorGroupsService';
+import { NotebookRendererMessagingService } from 'vs/workbench/contrib/notebook/browser/notebookRendererMessagingServiceImpl';
+import { INotebookRendererMessagingService } from 'vs/workbench/contrib/notebook/common/notebookRendererMessagingService';
 
 // Editor Contribution
 import 'vs/workbench/contrib/notebook/browser/contrib/clipboard/notebookClipboard';
@@ -72,15 +78,11 @@ import 'vs/workbench/contrib/notebook/browser/contrib/cellOperations/cellOperati
 import 'vs/workbench/contrib/notebook/browser/contrib/viewportCustomMarkdown/viewportCustomMarkdown';
 import 'vs/workbench/contrib/notebook/browser/contrib/troubleshoot/layout';
 
-
 // Diff Editor Contribution
 import 'vs/workbench/contrib/notebook/browser/diff/notebookDiffActions';
 
 // Output renderers registration
 import 'vs/workbench/contrib/notebook/browser/view/output/transforms/richTransform';
-import { ILabelService } from 'vs/platform/label/common/label';
-import { IWorkingCopyBackupService } from 'vs/workbench/services/workingCopy/common/workingCopyBackup';
-import { IEditorGroupsService } from 'vs/workbench/services/editor/common/editorGroupsService';
 
 /*--------------------------------------------------------------------------------------------- */
 
@@ -186,12 +188,15 @@ Registry.as<IEditorInputFactoryRegistry>(EditorExtensions.EditorInputFactories).
 export class NotebookContribution extends Disposable implements IWorkbenchContribution {
 	constructor(
 		@IUndoRedoService undoRedoService: IUndoRedoService,
+		@IConfigurationService configurationService: IConfigurationService,
 	) {
 		super();
 
+		const undoRedoPerCell = configurationService.getValue<boolean>(ExperimentalUndoRedoPerCell);
+
 		this._register(undoRedoService.registerUriComparisonKeyComputer(CellUri.scheme, {
 			getComparisonKey: (uri: URI): string => {
-				return getCellUndoRedoComparisonKey(uri);
+				return getCellUndoRedoComparisonKey(uri, undoRedoPerCell);
 			}
 		}));
 	}
@@ -251,7 +256,7 @@ class CellContentProvider implements ITextModelContentProvider {
 		}
 
 		if (result) {
-			const once = result.onWillDispose(() => {
+			const once = Event.any(result.onWillDispose, ref.object.notebook.onWillDispose)(() => {
 				once.dispose();
 				ref.dispose();
 			});
@@ -318,7 +323,7 @@ class CellInfoContentProvider {
 
 		for (const cell of ref.object.notebook.cells) {
 			if (cell.handle === data.handle) {
-				const metadataSource = getFormatedMetadataJSON(ref.object.notebook, cell.metadata || {}, cell.language);
+				const metadataSource = getFormatedMetadataJSON(ref.object.notebook, cell.metadata, cell.language);
 				result = this._modelService.createModel(
 					metadataSource,
 					mode,
@@ -540,6 +545,7 @@ registerSingleton(INotebookEditorModelResolverService, NotebookModelResolverServ
 registerSingleton(INotebookCellStatusBarService, NotebookCellStatusBarService, true);
 registerSingleton(INotebookEditorService, NotebookEditorWidgetService, true);
 registerSingleton(INotebookKernelService, NotebookKernelService, true);
+registerSingleton(INotebookRendererMessagingService, NotebookRendererMessagingService, true);
 
 const configurationRegistry = Registry.as<IConfigurationRegistry>(Extensions.Configuration);
 configurationRegistry.registerConfiguration({
@@ -587,7 +593,7 @@ configurationRegistry.registerConfiguration({
 			markdownDescription: nls.localize('notebook.cellToolbarVisibility.description', "Whether the cell toolbar should appear on hover or click."),
 			type: 'string',
 			enum: ['hover', 'click'],
-			default: 'hover'
+			default: 'click'
 		},
 	}
 });

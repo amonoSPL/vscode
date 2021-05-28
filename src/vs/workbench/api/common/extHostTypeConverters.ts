@@ -1443,8 +1443,8 @@ export namespace NotebookDocumentMetadata {
 	}
 }
 
-export namespace NotebookCellPreviousExecutionResult {
-	export function to(data: notebooks.NotebookCellMetadata): vscode.NotebookCellExecutionSummary {
+export namespace NotebookCellExecutionSummary {
+	export function to(data: notebooks.NotebookCellInternalMetadata): vscode.NotebookCellExecutionSummary {
 		return {
 			startTime: data.runStartTime,
 			endTime: data.runEndTime,
@@ -1453,7 +1453,7 @@ export namespace NotebookCellPreviousExecutionResult {
 		};
 	}
 
-	export function from(data: vscode.NotebookCellExecutionSummary): Partial<notebooks.NotebookCellMetadata> {
+	export function from(data: vscode.NotebookCellExecutionSummary): Partial<notebooks.NotebookCellInternalMetadata> {
 		return {
 			lastRunSuccess: data.success,
 			runStartTime: data.startTime,
@@ -1485,6 +1485,28 @@ export namespace NotebookCellKind {
 	}
 }
 
+export namespace NotebookData {
+
+	export function from(data: vscode.NotebookData): notebooks.NotebookDataDto {
+		const res: notebooks.NotebookDataDto = {
+			metadata: NotebookDocumentMetadata.from(data.metadata),
+			cells: [],
+		};
+		for (let cell of data.cells) {
+			types.NotebookCellData.validate(cell);
+			res.cells.push(NotebookCellData.from(cell));
+		}
+		return res;
+	}
+
+	export function to(data: notebooks.NotebookDataDto): vscode.NotebookData {
+		return {
+			metadata: NotebookDocumentMetadata.to(data.metadata),
+			cells: data.cells.map(NotebookCellData.to)
+		};
+	}
+}
+
 export namespace NotebookCellData {
 
 	export function from(data: vscode.NotebookCellData): notebooks.ICellDto2 {
@@ -1492,10 +1514,8 @@ export namespace NotebookCellData {
 			cellKind: NotebookCellKind.from(data.kind),
 			language: data.languageId,
 			source: data.value,
-			metadata: {
-				...data.metadata,
-				...NotebookCellPreviousExecutionResult.from(data.executionSummary ?? {})
-			},
+			metadata: data.metadata,
+			internalMetadata: NotebookCellExecutionSummary.from(data.executionSummary ?? {}),
 			outputs: data.outputs ? data.outputs.map(NotebookCellOutput.from) : []
 		};
 	}
@@ -1642,15 +1662,7 @@ export namespace NotebookDocumentContentOptions {
 	export function from(options: vscode.NotebookDocumentContentOptions | undefined): notebooks.TransientOptions {
 		return {
 			transientOutputs: options?.transientOutputs ?? false,
-			transientCellMetadata: {
-				...options?.transientCellMetadata,
-				executionOrder: true,
-				runState: true,
-				runStartTime: true,
-				runStartTimeAdjustment: true,
-				runEndTime: true,
-				lastRunSuccess: true
-			},
+			transientCellMetadata: options?.transientCellMetadata ?? {},
 			transientDocumentMetadata: options?.transientDocumentMetadata ?? {}
 		};
 	}
